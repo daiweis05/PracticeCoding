@@ -1,0 +1,384 @@
+""" 
+  2  EXPERIMENTAL: Base classes for trees and forests. 
+  3       
+  4  """ 
+  5  __author__ = """Aric Hagberg (hagberg@lanl.gov)""" 
+  6  #    Copyright (C) 2006 by  
+  7  #    Aric Hagberg <hagberg@lanl.gov> 
+  8  #    Dan Schult <dschult@colgate.edu> 
+  9  #    Pieter Swart <swart@lanl.gov> 
+ 10  #    Distributed under the terms of the GNU Lesser General Public License 
+ 11  #    http://www.gnu.org/copyleft/lesser.html 
+ 12  # 
+ 13   
+ 14  from networkx.graph import Graph 
+ 15  from networkx.digraph import DiGraph 
+ 16  from  networkx.exception import NetworkXException, NetworkXError 
+ 17  import networkx.convert as convert 
+ 18  import networkx.component as component 
+ 19  import networkx.path as shortest_path 
+ 20   
+ 21  # Yes, these aren't the natural datastructures for trees.  
+ 22   
+ 23 -class Tree(Graph): 
+ 24      """ A free (unrooted) tree.""" 
+ 25 -    def __init__(self,data=None,**kwds): 
+ 26          Graph.__init__(self,**kwds) 
+ 27          if data is not None: 
+ 28              try: # build a graph 
+ 29                  G=Graph() 
+ 30                  G=convert.from_whatever(data,create_using=G) 
+ 31              except: 
+ 32                  raise NetworkXError, "Data %s is not a tree"%data 
+ 33              # check if it is a tree. 
+ 34              if G.order()==G.size()+1 and \ 
+ 35                     component.number_connected_components(G)==1: 
+ 36                  self.adj=G.adj.copy() 
+ 37                  del G 
+ 38              else: 
+ 39                  raise NetworkXError, "Data %s is not a tree"%data 
+ 40                
+ 41 -    def add_node(self, n): 
+ 42          if n in self: 
+ 43              return # already in tree 
+ 44          elif len(self.adj)==0: 
+ 45              Graph.add_node(self,n) # first node 
+ 46          else:  # not allowed 
+ 47              raise NetworkXError(\ 
+ 48                  "adding single node %s not allowed in non-empty tree"%(n)) 
+ 49   
+ 50 -    def add_nodes_from(self, nbunch): 
+ 51          for n in nbunch: 
+ 52              self.add_node(n) 
+ 53   
+ 54 -    def delete_node(self, n): 
+ 55          try: 
+ 56              if len(self.adj[n])==1: # allowed for leaf node 
+ 57                  Graph.delete_node(self,n) 
+ 58              else: 
+ 59                  raise NetworkXError( 
+ 60                "deleting interior node %s not allowed in tree"%(n)) 
+ 61          except KeyError: # NetworkXError if n not in self 
+ 62              raise NetworkXError("node %s not in graph"%n) 
+ 63   
+ 64 -    def delete_nodes_from(self, nbunch): 
+ 65          for n in nbunch: 
+ 66              self.delete_node(n) 
+ 67   
+ 68 -    def add_edge(self, u, v=None):   
+ 69          if v is None: (u,v)=u  # no v given, assume u is an edge tuple 
+ 70          if self.has_edge(u,v): return # no parallel edges allowed 
+ 71          elif u in self and v in self: 
+ 72              raise NetworkXError("adding edge %s-%s not allowed in tree"%(u,v)) 
+ 73          elif u in self or v in self: 
+ 74              Graph.add_edge(self,u,v) 
+ 75              return 
+ 76          elif len(self.adj)==0: # first leaf 
+ 77              Graph.add_edge(self,u,v)             
+ 78              return 
+ 79          else: 
+ 80              raise NetworkXError("adding edge %s-%s not allowed in tree"%(u,v)) 
+ 81               
+ 82 -    def add_edges_from(self, ebunch):   
+ 83          for e in ebunch: 
+ 84              self.add_edge(e) 
+ 85               
+ 86 -    def delete_edge(self, u, v=None):  
+ 87          if v is None: (u,v)=u 
+ 88          if self.degree(u)==1 or self.degree(v)==1: # leaf edge 
+ 89              Graph.delete_edge(self,u,v) 
+ 90          else: # interior edge 
+ 91              raise NetworkXError(\ 
+ 92                    "deleting interior edge %s-%s not allowed in tree"%(u,v)) 
+ 93          if self.degree(u)==0:  # OK to delete remaining isolated node 
+ 94              Graph.delete_node(self,u) 
+ 95          if self.degree(v)==0:  # OK to delete remaining isolated node           
+ 96              Graph.delete_node(self,v) 
+ 97   
+ 98 -    def delete_edges_from(self, ebunch):   
+ 99          for e in ebunch: 
+100              self.delete_edge(e) 
+101   
+102      # leaf notation             
+103 -    def add_leaf(self, u, v=None):   
+104          self.add_edge(u,v) 
+105   
+106 -    def delete_leaf(self, u, v=None):  
+107          self.delete_edge(u,v) 
+108   
+109 -    def add_leaves_from(self, ebunch):   
+110          for e in ebunch: 
+111              self.add_leaf(e) 
+112   
+113 -    def delete_leaves_from(self, ebunch):   
+114          for e in ebunch: 
+115              self.delete_leaf(e) 
+116   
+117 -    def union_sub(self, T1, **kwds): 
+118          """Polymorphic helper method for Graph.union(). 
+119   
+120          Required keywords: v_from and v_to, where v_from is the node 
+121          in self to which v_to should be attached as child.""" 
+122          T = self.copy() 
+123          parent = kwds['v_from'] 
+124          node = kwds['v_to'] 
+125          T.add_edge(parent, node) 
+126          T.union_sub_tree_helper(T1, node) 
+127          return T 
+128   
+129 -    def union_sub_tree_helper(self, T1, parent, grandparent=None): 
+130          for child in T1[parent]: 
+131              if(child != grandparent): 
+132                  self.add_edge(parent, child) 
+133                  self.union_sub_tree_helper(T1, child, parent) 
+134   
+135   
+136 -class RootedTree(Tree,Graph): 
+137      """ A rooted tree.""" 
+138 -    def __init__(self,root,data=None,**kwds): 
+139          Tree.__init__(self,data=data,**kwds) 
+140          self.root=root 
+141          self.par={} # keep track of parent 
+142          if data is not None: # handle input data, could be Tree, etc. 
+143              # now root tree for this data 
+144              self.root_tree(root)             
+145   
+146      # parents, use predecessors 
+147      # children, use successors 
+148   
+149 -    def delete_node(self, n): 
+150          try: 
+151              if len(self.adj[n])==1: # allowed for leaf node 
+152                  Graph.delete_node(self,n) 
+153                  del self.par[n] 
+154              else: 
+155                  raise NetworkXError, \ 
+156                "deleting interior node %s not allowed in tree"%(n) 
+157          except KeyError: # NetworkXError if n not in self 
+158              raise NetworkXError, "node %s not in graph"%n 
+159   
+160   
+161 -    def add_edge(self, u, v=None):   
+162          if v is None: 
+163              (u,v)=u  # no v given, assume u is an edge tuple 
+164          if self.has_edge(u,v):  # no parallel edges 
+165              return 
+166          elif u in self and v in self: 
+167              raise NetworkXError, "adding edge %s-%s not allowed in tree"%(u,v) 
+168          elif u in self: 
+169              Graph.add_edge(self,u,v) 
+170              self.par[v]=u 
+171              return 
+172          elif v in self: 
+173              Graph.add_edge(self,u,v) 
+174              self.par[u]=v 
+175              return 
+176          elif len(self.adj)==0: # first leaf 
+177              Graph.add_edge(self,u,v)             
+178              self.par[v]=u   # u is v's parent           
+179              return 
+180          else: 
+181              raise NetworkXError, "adding edge %s-%s not allowed in tree"%(u,v) 
+182               
+183 -    def parent(self,u): 
+184          try: 
+185              return self.par[u] 
+186          except: 
+187              return None 
+188   
+189               
+190 -    def children(self,u): 
+191          #FIXME reverse parent dict 
+192          pass 
+193   
+194   
+195 -    def root_tree(self,root):         
+196          preds=shortest_path.predecessor(self,root) 
+197          del preds[root] 
+198          for p in preds: 
+199              self.par[p]=preds[p][0] # preds[node] is an array  
+200   
+201   
+202 -class DirectedTree(Tree,DiGraph): 
+203      """ A directed tree.""" 
+204 -    def __init__(self,data=None,**kwds): 
+205          DiGraph.__init__(self,**kwds) 
+206          if data is not None: 
+207   
+208              try: # build a rooted tree 
+209                  D=DiGraph() 
+210                  for (child,parent) in data.par.iteritems(): 
+211                      D.add_edge(parent,child) 
+212              except AttributeError:  
+213                  D=DiGraph(data) 
+214              except: # else nothing we can do 
+215                  raise NetworkXError, "Data %s is not a rooted tree:"%data 
+216                       
+217              if D.order()==D.size()+1: 
+218                  self.pred=D.pred.copy() 
+219                  self.succ=D.succ.copy() 
+220                  self.adj=self.succ 
+221                  del D 
+222              else: # not a tree 
+223                  raise NetworkXError, "Data %s is not a rooted tree:"%data 
+224                
+225 -    def delete_node(self, n): 
+226          try: 
+227              if len(self.succ[n])+len(self.pred[n])==1: # allowed for leaf node 
+228                  DiGraph.delete_node(self,n) # deletes adjacent edge too 
+229              else: 
+230                  raise NetworkXError( \ 
+231                "deleting interior node %s not allowed in tree"%(n)) 
+232          except KeyError: # NetworkXError if n not in self 
+233              raise NetworkXError, "node %s not in graph"%n 
+234               
+235 -    def add_edge(self, u, v=None):   
+236          if v is None: (u,v)=u  # no v given, assume u is an edge tuple 
+237          if self.has_edge(u,v): return # no parallel edges 
+238          elif u in self and v in self: 
+239              raise NetworkXError, "adding edge %s-%s not allowed in tree"%(u,v) 
+240          elif u in self or v in self: 
+241              DiGraph.add_edge(self,u,v) # u->v 
+242              return 
+243          elif len(self.adj)==0: # first leaf 
+244              DiGraph.add_edge(self,u,v) # u->v            
+245              return 
+246          else: 
+247              raise NetworkXError("adding edge %s-%s not allowed in tree"%(u,v)) 
+248               
+249 -    def delete_edge(self, u, v=None):  
+250          if v is None: (u,v)=u 
+251          if self.degree(u)==1 or self.degree(v)==1: 
+252              DiGraph.delete_edge(self,u,v) 
+253          else: 
+254              raise NetworkXError( 
+255                    "deleting interior edge %s-%s not allowed in tree"%(u,v)) 
+256          if self.degree(u)==0: DiGraph.delete_node(self,u) 
+257          if self.degree(v)==0: DiGraph.delete_node(self,v) 
+258   
+259   
+260 -class Forest(Tree,Graph): 
+261      """ A forest.""" 
+262 -    def __init__(self,data=None,**kwds): 
+263          Tree.__init__(self,**kwds) 
+264          self.comp={}  # dictionary mapping node to component 
+265          self.nc=0 # component index, start at zero, sequential (with holes) 
+266          if data is not None: 
+267              try: 
+268                  self=convert.from_whatever(data,create_using=self) 
+269              except: 
+270                  raise NetworkXError("Data %s is not a forest"%data) 
+271           
+272 -    def add_node(self, n): 
+273          Graph.add_node(self,n) 
+274          # this is not called from add_edge so we must assign 
+275          # and component (else that is assigned in add_edge) 
+276          self.comp[n]=self.nc 
+277          self.nc+=1 
+278   
+279   
+280 -    def delete_node(self, n): 
+281          # get neighbors first since this will remove all edges to them 
+282          neighbors=self.neighbors(n) 
+283          Graph.delete_node(self,n) # delete node and adjacent edges 
+284          del self.comp[n]     # remove node from component dictionary 
+285          if len(neighbors)==1: return # n was a leaf node 
+286          for nbr in neighbors: 
+287              # make new components of each nbr and connected graph 
+288              # FIXME this does more work then is necessary 
+289              # since nbrs of n could be in same conected component 
+290              # and then will get renumbered more than once 
+291              vnodes=component.node_connected_component(self,nbr) 
+292              for v in vnodes: 
+293                  self.comp[v]=self.nc 
+294              self.nc+=1 
+295   
+296 -    def add_edge(self, u, v=None):   
+297          if v is None: (u,v)=u  # no v given, assume u is an edge tuple 
+298          if self.has_edge(u,v):  return # no parallel edges 
+299          if u in self:  # u is in forest 
+300              if v in self: # v is in forest 
+301                  if self.comp[u]==self.comp[v]: # same tree? 
+302                      raise NetworkXError, \ 
+303                            "adding edge %s-%s not allowed in forest"%(u,v) 
+304                  else:  # join two trees  
+305                      Graph.add_edge(self,u,v) 
+306                      ucomp=self.comp[u] 
+307                      # set component number of v tree to u tree 
+308                      for n in component.node_connected_component(self,v): 
+309                          self.comp[n]=ucomp 
+310              else: # add u-v to tree in component with u 
+311                  Graph.add_edge(self,u,v) 
+312                  self.comp[v]=self.comp[u] 
+313          else: # make new tree with only u-v 
+314              Graph.add_edge(self,u,v) 
+315              self.comp[u]=self.nc 
+316              self.comp[v]=self.nc 
+317              self.nc+=1 
+318           
+319 -    def delete_edge(self, u, v=None):  
+320          if v is None: (u,v)=u   # no v given, assume u is an edge tuple 
+321          Graph.delete_edge(self,u,v) 
+322          # this will always break a tree into two trees 
+323          # put nodes connected to v in a new component 
+324          vnodes=component.node_connected_component(self,v) 
+325          for n in vnodes: 
+326              self.comp[n]=self.nc 
+327          self.nc+=1 
+328   
+329 -    def tree(self,n=None): 
+330          """Return tree containing node n. 
+331          If no node is specified return list of all trees in forest. 
+332          """ 
+333          if n is not None: 
+334              ncomp=self.comp[n] 
+335              vnodes=[v for v in self if self.comp[v]==ncomp] 
+336              return Tree(self.subgraph(vnodes)) 
+337          else: 
+338              trees=[] 
+339              uniqc={} 
+340              # make a unique list of component id's (integers) 
+341              for c in self.comp.values():  
+342                  uniqc[c]=True 
+343              for c in uniqc.keys(): 
+344                  vnodes=[v for v in self if self.comp[v]==c] 
+345                  trees.append(Tree(self.subgraph(vnodes))) 
+346              return trees 
+347   
+348 -    def tree_nodes(self,n=None): 
+349          """Return tree containing node n. 
+350          If no node is specified return list of all trees in forest. 
+351          """ 
+352          if n is not None: 
+353              return self.tree(n).nodes() 
+354          else: 
+355              tlist=[] 
+356              for t in self.tree(): 
+357                  tlist.append(t.nodes()) 
+358              return tlist 
+359           
+360   
+361 -class DirectedForest(DiGraph,Tree): 
+362      # not implemented 
+363      pass 
+364   
+365   
+366 -def _test_suite(): 
+367      import doctest 
+368      suite = doctest.DocFileSuite('tests/tree.txt', 
+369                                   'tests/forest.txt', 
+370                                   package='networkx') 
+371      return suite 
+372   
+373   
+374  if __name__ == "__main__": 
+375      import os 
+376      import sys 
+377      import unittest 
+378      if sys.version_info[:2] < (2, 4): 
+379          print "Python version 2.4 or later required for tests (%d.%d detected)." %  sys.version_info[:2] 
+380          sys.exit(-1) 
+381      # directory of networkx package (relative to this) 
+382      nxbase=sys.path[0]+os.sep+os.pardir 
+383      sys.path.insert(0,nxbase) # prepend to search path 
+384      unittest.TextTestRunner().run(_test_suite()) 
